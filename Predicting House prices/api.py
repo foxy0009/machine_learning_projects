@@ -44,6 +44,22 @@ def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
 
     df = pd.DataFrame([data_dict])
 
+    # 2. Derived numerical features used in training
+    df["Avg_Room_Size"] = df["Net_Metrekare"] / np.maximum(df["Oda_Sayısı"], 0.5)
+
+    # 3. Defaults for categorical groups that are not user-facing
+    defaults = {
+        "Tapu_Durumu_Unknown": 1,
+        "Kullanım_Durumu_Mülk Sahibi Oturuyor": 1,
+        "Kullanım_Durumu_Kiracı Oturuyor": 0,
+        "Takas_Yok": 1,
+        "Yatırıma_Uygunluk_Unknown": 1,
+        "Eşya_Durumu_Unknown": 1,
+    }
+    for col, value in defaults.items():
+        df[col] = value
+
+    # 4. One-hot encode city/heating according to training columns
     # 2. One-hot encode city/heating according to training columns
     city_cols = [c for c in model_columns if c.startswith("Şehir_")]
     heat_cols = [c for c in model_columns if c.startswith("Isıtma_Tipi_")]
@@ -59,6 +75,25 @@ def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
     if target_heat_col in heat_cols:
         df[target_heat_col] = 1
 
+    # 5. Ensure all model columns exist before scaling/ordering
+    df = df.reindex(columns=list(set(model_columns) | set(df.columns)), fill_value=0)
+
+    # 6. Scaling using the fitted scaler feature set
+    features_to_scale = list(getattr(scaler, "feature_names_in_", []))
+    if not features_to_scale:
+        features_to_scale = [
+            'Net_Metrekare', 'Oda_Sayısı', 'Bulunduğu_Kat',
+            'Binanın_Yaşı', 'Binanın_Kat_Sayısı', 'Banyo_Sayısı', 'Avg_Room_Size'
+        ]
+
+    missing_scale_cols = [col for col in features_to_scale if col not in df.columns]
+    for col in missing_scale_cols:
+        df[col] = 0
+
+    df[features_to_scale] = scaler.transform(df[features_to_scale])
+
+    # 7. Final alignment to model column order
+    df = df.reindex(columns=model_columns, fill_value=0)
     # 3. Align with Model Columns (creates any other missing columns and orders correctly)
     df = df.reindex(columns=model_columns, fill_value=0)
 

@@ -33,7 +33,6 @@ with col2:
 def build_payload():
     data = {
         "Net_Metrekare": net_sqm,
-        "Brüt_Metrekare": gross_sqm,
         "Oda_Sayısı": rooms,
         "Bulunduğu_Kat": floor,
         "Binanın_Yaşı": age,
