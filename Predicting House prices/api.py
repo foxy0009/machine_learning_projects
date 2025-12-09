@@ -20,6 +20,7 @@ app = FastAPI(title="House Price Predictor API")
 class HouseInput(BaseModel):
     # Numerical features
     Net_Metrekare: float = Field(..., gt=10, description="Net area in m2")
+    Brüt_Metrekare: float = Field(..., gt=10, description="Gross area in m2")
     Oda_Sayısı: float = Field(..., gt=0, description="Number of rooms")
     Banyo_Sayısı: float = Field(..., ge=0, description="Number of bathrooms")
     Binanın_Yaşı: float = Field(..., ge=0, description="Age of building (0-8 encoded)")
@@ -59,6 +60,7 @@ def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
         df[col] = value
 
     # 4. One-hot encode city/heating according to training columns
+    # 2. One-hot encode city/heating according to training columns
     city_cols = [c for c in model_columns if c.startswith("Şehir_")]
     heat_cols = [c for c in model_columns if c.startswith("Isıtma_Tipi_")]
 
@@ -92,6 +94,17 @@ def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
 
     # 7. Final alignment to model column order
     df = df.reindex(columns=model_columns, fill_value=0)
+    # 3. Align with Model Columns (creates any other missing columns and orders correctly)
+    df = df.reindex(columns=model_columns, fill_value=0)
+
+    # 4. Scaling
+    scale_cols = [
+        'Net_Metrekare', 'Brüt_Metrekare', 'Oda_Sayısı', 'Bulunduğu_Kat',
+        'Binanın_Yaşı', 'Binanın_Kat_Sayısı', 'Banyo_Sayısı'
+    ]
+    valid_scale_cols = [c for c in scale_cols if c in df.columns]
+    if valid_scale_cols:
+        df[valid_scale_cols] = scaler.transform(df[valid_scale_cols])
 
     return df
 

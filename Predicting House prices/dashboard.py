@@ -25,6 +25,7 @@ with col1:
     rooms = st.number_input("Rooms", min_value=1.0, value=3.0, step=0.5)
 
 with col2:
+    gross_sqm = st.number_input("Gross Area (m²)", min_value=10, value=120)
     bathrooms = st.number_input("Bathrooms", min_value=0, value=1)
 
 
