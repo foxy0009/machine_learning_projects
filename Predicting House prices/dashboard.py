@@ -33,6 +33,10 @@ with col2:
 def build_payload():
     data = {
         "Net_Metrekare": net_sqm,
+<<<<<<< Updated upstream
+=======
+        # "Brüt_Metrekare": gross_sqm,  <-- REMOVED THIS LINE
+>>>>>>> Stashed changes
         "Oda_Sayısı": rooms,
         "Bulunduğu_Kat": floor,
         "Binanın_Yaşı": age,
@@ -42,7 +46,6 @@ def build_payload():
         "Isitma_Tipi": heating if heating != "Other" else "Bilinmiyor",
     }
     return data
-
 
 # --- PREDICTION BUTTON ---
 if st.button("✨ Vibe Check Price", type="primary", use_container_width=True):

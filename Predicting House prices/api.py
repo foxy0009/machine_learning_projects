@@ -5,45 +5,56 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import uvicorn
 
-# --- 1. Load Artifacts Once (Global) ---
+app = FastAPI(title="House Price Predictor API")
+
+# --- 1. Load Artifacts ---
 try:
     model = joblib.load('xgb_model.joblib')
     scaler = joblib.load('scaler.pkl')
-    model_columns = joblib.load('model_columns.pkl')  # List of columns the model expects
+    # Use the columns list saved during training to ensure exact order
+    model_columns = joblib.load('model_columns.pkl')
+    print("Artifacts loaded successfully.")
 except Exception as e:
-    print(f"CRITICAL ERROR: Could not load model artifacts. {e}")
-    # In production, you might want to exit here if models aren't found
+    print(f"CRITICAL ERROR: {e}")
+    model = None
 
-app = FastAPI(title="House Price Predictor API")
 
-# --- 2. Strict Input Schema (The "Contract") ---
+# --- 2. Input Schema ---
+# We keep Banyo_Sayısı here so the website (Streamlit) works,
+# but we will ignore it in the logic below.
 class HouseInput(BaseModel):
-    # Numerical features
     Net_Metrekare: float = Field(..., gt=10, description="Net area in m2")
-    Brüt_Metrekare: float = Field(..., gt=10, description="Gross area in m2")
     Oda_Sayısı: float = Field(..., gt=0, description="Number of rooms")
-    Banyo_Sayısı: float = Field(..., ge=0, description="Number of bathrooms")
+    Banyo_Sayısı: float = Field(..., ge=0, description="Number of bathrooms")  # Kept for compatibility
     Binanın_Yaşı: float = Field(..., ge=0, description="Age of building (0-8 encoded)")
     Binanın_Kat_Sayısı: int = Field(..., gt=0, description="Total floors in building")
     Bulunduğu_Kat: int = Field(..., description="Floor of the flat")
 
-    # Categorical features (User sends strings, we convert)
-    Sehir: str = Field(..., example="antalya", description="City name (lowercase)")
+    # String inputs
+    Sehir: str = Field(..., example="antalya", description="City name")
     Isitma_Tipi: str = Field(..., example="Kombi Doğalgaz", description="Heating type")
 
-# --- 3. Helper: Preprocessing Logic ---
-def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
-    """Convert raw user input into the exact format the model expects."""
 
-    # 1. Create DataFrame from raw input
+# --- 3. Preprocessing ---
+def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
     data_dict = input_data.dict()
 
-    # normalize case-sensitive categories
-    data_dict["Sehir"] = data_dict["Sehir"].lower()
-    data_dict["Isitma_Tipi"] = data_dict["Isitma_Tipi"].strip()
+    # --- THE FIX: REMOVE BATHROOMS ---
+    # We remove 'Banyo_Sayısı' from the data dictionary immediately.
+    # The model will never see what the user typed.
+    if "Banyo_Sayısı" in data_dict:
+        del data_dict["Banyo_Sayısı"]
 
+    # 1. Normalize Inputs
+    # Lowercase city to match training keys (e.g. "Şehir_antalya")
+    sehir_input = data_dict.pop("Sehir").lower()
+    # Heating type usually keeps casing (e.g. "Isıtma_Tipi_Kombi Doğalgaz")
+    isitma_input = data_dict.pop("Isitma_Tipi")
+
+    # 2. Create Base DataFrame
     df = pd.DataFrame([data_dict])
 
+<<<<<<< Updated upstream
     # 2. Derived numerical features used in training
     df["Avg_Room_Size"] = df["Net_Metrekare"] / np.maximum(df["Oda_Sayısı"], 0.5)
 
@@ -95,39 +106,63 @@ def _preprocess_input(input_data: HouseInput) -> pd.DataFrame:
     # 7. Final alignment to model column order
     df = df.reindex(columns=model_columns, fill_value=0)
     # 3. Align with Model Columns (creates any other missing columns and orders correctly)
+=======
+    # 3. Handle One-Hot Encoding (Manual Creation)
+    target_city_col = f"Şehir_{sehir_input}"
+    target_heat_col = f"Isıtma_Tipi_{isitma_input}"
+
+    # 4. Reindex to match model structure exactly
+    # This ensures we have all columns the model expects, filled with 0s initially
+>>>>>>> Stashed changes
     df = df.reindex(columns=model_columns, fill_value=0)
 
-    # 4. Scaling
+    # 5. Set the active One-Hot columns to 1
+    if target_city_col in df.columns:
+        df[target_city_col] = 1
+
+    if target_heat_col in df.columns:
+        df[target_heat_col] = 1
+
+    # 6. Scaling
+    # We REMOVED 'Banyo_Sayısı' from this list so the scaler doesn't crash
     scale_cols = [
-        'Net_Metrekare', 'Brüt_Metrekare', 'Oda_Sayısı', 'Bulunduğu_Kat',
-        'Binanın_Yaşı', 'Binanın_Kat_Sayısı', 'Banyo_Sayısı'
+        'Net_Metrekare', 'Oda_Sayısı', 'Bulunduğu_Kat',
+        'Binanın_Yaşı', 'Binanın_Kat_Sayısı'
     ]
-    valid_scale_cols = [c for c in scale_cols if c in df.columns]
-    if valid_scale_cols:
-        df[valid_scale_cols] = scaler.transform(df[valid_scale_cols])
+
+    # Filter to ensure we only scale columns that are actually in the dataframe
+    cols_to_scale = [c for c in scale_cols if c in df.columns]
+
+    if cols_to_scale:
+        try:
+            df[cols_to_scale] = scaler.transform(df[cols_to_scale])
+        except ValueError as e:
+            # If the scaler still expects bathrooms (because you didn't retrain yet),
+            # this might warn, but it usually tries to scale what it can.
+            print(f"Scaling Warning: {e}")
 
     return df
 
-# --- 4. The Endpoint ---
+
+# --- 4. Endpoint ---
 @app.post("/predict")
 def predict(house: HouseInput):
+    if not model:
+        raise HTTPException(status_code=500, detail="Model not loaded")
+
     try:
-        # Preprocess
         processed_df = _preprocess_input(house)
 
-        # Predict
+        # XGBoost prediction
         log_pred = model.predict(processed_df)[0]
-        real_price = np.expm1(log_pred)
+        real_price = np.expm1(log_pred)  # Reverse log transformation
 
         return {
             "prediction_tl": round(float(real_price), 2),
             "status": "success"
         }
-
     except Exception as e:
-        # Log the error internally here
-        print(f"Error during prediction: {e}")
-        # Return a proper HTTP 500
+        print(f"Prediction Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
